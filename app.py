@@ -51,6 +51,10 @@ PALETTE = {
     "dark":      "#1e293b",  # slate-800
     "darker":    "#0f172a",  # slate-900
     "rule":      "#e2e8f0",  # slate-200
+    # 红黄绿 - 风险等级色
+    "risk_high": "#dc2626",  # red-600   高风险
+    "risk_mid":  "#d97706",  # amber-600 中风险
+    "risk_low":  "#16a34a",  # green-600 低风险
 }
 
 
@@ -363,13 +367,13 @@ def score_one(user_input: dict, ref: dict) -> dict:
 
 
 def risk_level(score: float) -> tuple[str, str, str]:
-    # 同色系深浅区分
+    # 红 / 黄 / 绿 区分风险等级
     if score >= RISK_THRESHOLDS["low"]:
-        return "低风险", PALETTE["light"], "得分位于安全区间，违约概率较低。"
+        return "低风险", PALETTE["risk_low"], "得分位于安全区间，违约概率较低。"
     elif score >= RISK_THRESHOLDS["high"]:
-        return "中风险", PALETTE["primary"], "得分位于观察区间，存在一定违约风险。"
+        return "中风险", PALETTE["risk_mid"], "得分位于观察区间，存在一定违约风险。"
     else:
-        return "高风险", PALETTE["darker"], "得分位于高风险区间，违约概率显著上升。"
+        return "高风险", PALETTE["risk_high"], "得分位于高风险区间，违约概率显著上升。"
 
 
 def default_prob(score: float) -> float:
@@ -426,17 +430,17 @@ col1.metric("综合得分", f"{score:.4f}", f"{score_pct:.1f} / 100")
 col2.metric("风险等级", level)
 col3.metric("违约概率", f"{pd_val*100:.1f}%", f"{(0.5-pd_val)*100:+.1f}%")
 
-# 风险等级条（同色系深→浅）
+# 风险等级条（红→黄→绿，对应高/中/低风险）
 st.markdown(
     f"""
 <div style="background:linear-gradient(90deg,
-    {PALETTE['darker']} 0%, {PALETTE['darker']} 25%,
-    {PALETTE['primary']} 25%, {PALETTE['primary']} 55%,
-    {PALETTE['light']} 55%, {PALETTE['light']} 100%);
+    {PALETTE['risk_high']} 0%, {PALETTE['risk_high']} 25%,
+    {PALETTE['risk_mid']} 25%, {PALETTE['risk_mid']} 55%,
+    {PALETTE['risk_low']} 55%, {PALETTE['risk_low']} 100%);
     height:22px;border-radius:11px;position:relative;margin:8px 0 12px 0;">
   <div style="position:absolute;left:{min(max(score_pct,0),100)}%;top:-4px;
     transform:translateX(-50%);">
-    <div style="background:{PALETTE['darker']};color:#ffffff;
+    <div style="background:{color};color:#ffffff;
         padding:2px 10px;border-radius:6px;font-size:12px;white-space:nowrap;">
       {level} · {score:.4f}
     </div>
@@ -495,4 +499,41 @@ with right:
     st.dataframe(
         risk_df[["指标", "维度", "极性", "原始值", "归一化值", "重要性", "风险贡献"]],
         use_container_width=True, hide_index=True,
+    )
+
+st.markdown("<hr>", unsafe_allow_html=True)
+
+with st.expander("15 项指标归一化明细"):
+    detail = []
+    for name, dim, polarity, _ in INDICATORS:
+        detail.append({
+            "维度":     dim,
+            "指标":     name,
+            "极性":     "极小型" if polarity == "negative" else "极大型",
+            "原始值":   round(user_input[name], 4),
+            "权重":     round(ref["weights"][name], 4),
+            "归一化值": round(result["norm_values"][name], 4),
+        })
+    st.dataframe(pd.DataFrame(detail), use_container_width=True, hide_index=True)
+
+with st.expander("模型说明"):
+    st.markdown(
+        """
+**综合评分 5 步流程**
+
+1. **标准化处理**：资产负债率极小型用 max−x 正向化；其余 14 项极大型。Min-Max 归一化到 [0,1]。
+2. **熵权法**：w_j = (1 − e_j) / Σ(1 − e_i)，权重反映指标在样本间变异度。
+3. **加权矩阵**：V = R · w。
+4. **TOPSIS 距离**：D⁺ = √Σ(V − V⁺)²，D⁻ = √Σ(V − V⁻)²。
+5. **综合得分**：Score = D⁻ / (D⁺ + D⁻)。
+
+**风险等级阈值**
+
+- 低风险：Score ≥ 0.3021
+- 中风险：0.2131 ≤ Score < 0.3021
+- 高风险：Score < 0.2131
+
+**违约概率**：Sigmoid 函数 PD = 1 / (1 + exp(15·(Score − 0.2131)))，
+在中/高边界处 PD = 0.5，向两端平滑收敛。
+"""
     )
